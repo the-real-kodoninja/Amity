@@ -1,6 +1,6 @@
 # Amity - A Decentralized Social Networking Platform on Mastodon and Motoko
 
-![Amity Logo](https://via.placeholder.com/150x50.png?text=Amity+Logo) <!-- Placeholder for logo; replace with actual logo if available -->
+![Amity 2015](https://github.com/the-real-kodoninja/Amity/blob/main/references/11148567_955037097860610_1543569738534476929_o.jpg?raw=true) 
 
 Amity is a modern reimagining of the GreenHeartPT social networking platform, originally created in 2015 by [the-real-kodoninja](https://github.com/the-real-kodoninja). The original platform was built using PHP and jQuery, but Amity brings the same design and functionality into the present with a fresh tech stack: **Go**, **Gorilla Mux**, **Material-UI**, **React**, and **MongoDB**, now integrated with the **Mastodon network** and deployed on the **Motoko chain** (Internet Computer blockchain). Amity aims to provide a fun, simple, and secure social networking experience where users can connect, share, and engage with others while maintaining the nostalgic design of the original GreenHeartPT, all within a decentralized ecosystem.
 
@@ -106,43 +106,43 @@ The original GreenHeartPT platform was created in 2015 by [the-real-kodoninja](h
 
 1. **Login Page**
    - **Description:** The login page features a simple form for email and password, with a sidebar highlighting features like "Stay connected with everyone" and "Become anonymous." It also shows stats like "Total Users: 13" and "Total Post: 115."
-   - **Image:** [references/login.png](references/login.png)
+     
+      ![references/login.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11169579_955037271193926_4355236387694178411_o.jpg?raw=true)
 
 2. **User Profile (batgirl)**
    - **Description:** The profile page for user "batgirl" shows a cover photo with *The Powerpuff Girls* characters, a profile picture of Batgirl, and stats (e.g., "photos 11," "connections 6"). The photos section displays comic-related images like Harley Quinn.
-   - **Image:** [references/batgirl.png](references/batgirl.png)
+     
+     ![references/batgirl.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11079998_955037524527234_2253325221238154678_o.jpg?raw=true)
+     ![references/batgirl.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11154576_955037581193895_8025093307947206791_o.jpg?raw=true)
+     ![references/batgirl.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11164635_955037657860554_7614564749226175066_o.jpg?raw=true)
 
 3. **User Profile (emoorephp)**
    - **Description:** The profile page for user "emoorephp" features a scenic cover photo, a profile picture, and stats (e.g., "feed 45," "connections 9"). The user is a developer at "Aviyon" and a "fitness enthusiast."
-   - **Image:** [references/emoorephp.png](references/emoorephp.png)
+     
+     ![references/emoorephp.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11148567_955037097860610_1543569738534476929_o.jpg?raw=true)
+     ![references/emoorephp.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11161703_955037167860603_3753640108829535325_o.jpg?raw=true)
+     ![references/emoorephp.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11169554_955038464527140_1781779550120457726_o.jpg?raw=true)
+     ![references/emoorephp.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11174302_955037351193918_9146954543274840299_o.jpg?raw=true)
 
 4. **Feed Page**
-   - **Description:** The global feed shows posts from connected users, such as "larry" posting "#BETA" and "emoorephp" posting "I so need this #bike" with an image of a futuristic bike.
-   - **Image:** [references/feed.png](references/feed.png)
+     **Description:** The global feed shows posts from connected users, such as "larry" posting "#BETA" and "emoorephp" posting "I so need this #bike" with an image of a futuristic bike.
+     
+     ![references/feed.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/1980501_955038101193843_5565818349684851117_o.jpg?raw=true)
 
 5. **Developer Page**
    - **Description:** The developer page provides info about the platform’s goals, software (e.g., Firefox Developer Edition, Notepad++), and encourages feedback.
-   - **Image:** [references/developer.png](references/developer.png)
+     
+     ![references/developer.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11174728_955038264527160_6465011376463576850_o.jpg?raw=true)
 
 6. **Search Results**
    - **Description:** Searching for "b" shows users like "batfan," "batman," and "bunny," with their usernames, locations, and profile pictures.
-   - **Image:** [references/search.png](references/search.png)
+     
+     ![references/search.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11157523_955038047860515_7463366602084980064_o.jpg?raw=true)
 
 7. **Photos Page (batgirl)**
    - **Description:** The photos page for "batgirl" displays a grid of comic-related images, such as Harley Quinn and Batgirl, with timestamps.
-   - **Image:** [references/photos.png](references/photos.png)
-
-8. **Feed with Anime Post**
-   - **Description:** A feed post by "emoorephp" with the text "I love this #anime" and an image of *One Piece* characters.
-   - **Image:** [references/feed-anime.png](references/feed-anime.png)
-
-9. **Notifications**
-   - **Description:** A notification dropdown showing recent activity, such as "larry posted on his page" and "birdman posted on his page."
-   - **Image:** [references/notifications.png](references/notifications.png)
-
-10. **Profile with Following**
-    - **Description:** The "emoorephp" profile showing a "following 2" section, with thumbnails of followed users.
-    - **Image:** [references/following.png](references/following.png)
+     
+     ![references/photos.png](https://github.com/the-real-kodoninja/Amity/blob/main/references/11011939_955037934527193_2760126084887791562_o.jpg?raw=true)
 
 ### Back to Amity
 [⬅ Back to Amity README](#amity---a-decentralized-social-networking-platform-on-mastodon-and-motoko)
