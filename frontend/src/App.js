@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Link, Navigate } from 'react-router-dom';
 import { 
     AppBar, Toolbar, Typography, Button, Container, TextField, InputAdornment, 
-    IconButton, List, ListItem, ListItemText, Badge, Drawer, Box, Grid, Avatar, Divider 
+    IconButton, List, ListItem, ListItemText, Badge, Drawer, Box, Grid, Avatar, Divider, Switch 
 } from '@mui/material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import MenuIcon from '@mui/icons-material/Menu';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Home from './Home';
 import Profile from './Profile';
 import Photos from './Photos';
@@ -22,52 +23,8 @@ import AIIM from './AIIM';
 import Lists from './Lists';
 import Hangouts from './Hangouts';
 import Settings from './Settings';
+import Shorts from './Shorts';
 import { getUser, searchUsers } from './api';
-
-const theme = createTheme({
-    palette: {
-        primary: {
-            main: '#2e7d32',
-        },
-        secondary: {
-            main: '#4caf50',
-        },
-        background: {
-            default: '#f4f4f4',
-        },
-    },
-    typography: {
-        fontFamily: 'Roboto, Arial, sans-serif',
-        h1: {
-            fontSize: '2.5rem',
-            fontWeight: 700,
-            color: '#2e7d32',
-        },
-        h2: {
-            fontSize: '1.8rem',
-            fontWeight: 600,
-            color: '#388e3c',
-        },
-    },
-    components: {
-        MuiCard: {
-            styleOverrides: {
-                root: {
-                    borderRadius: 8,
-                    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
-                },
-            },
-        },
-        MuiPaper: {
-            styleOverrides: {
-                root: {
-                    borderRadius: 8,
-                    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
-                },
-            },
-        },
-    },
-});
 
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -76,7 +33,71 @@ function App() {
     const [unreadCount, setUnreadCount] = useState(0);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [user, setUser] = useState(null);
-    const [trends, setTrends] = useState([]); // Mock trends for now
+    const [trends, setTrends] = useState(['#Amity', '#SocialMedia', '#EarthTones']);
+    const [themeMode, setThemeMode] = useState('light');
+
+    const theme = createTheme({
+        palette: {
+            mode: themeMode,
+            primary: {
+                main: '#4a4a4a', // Dark gray
+            },
+            secondary: {
+                main: '#6d6d6d', // Medium gray
+            },
+            background: {
+                default: themeMode === 'light' ? '#e0e0e0' : '#333333', // Light gray / dark gray
+                paper: themeMode === 'light' ? '#f5f5f5' : '#424242',   // Off-white / darker gray
+            },
+            text: {
+                primary: themeMode === 'light' ? '#333333' : '#e0e0e0',
+                secondary: themeMode === 'light' ? '#555555' : '#b0b0b0',
+            },
+        },
+        typography: {
+            fontFamily: 'Roboto, Arial, sans-serif',
+            h1: {
+                fontSize: '2.5rem',
+                fontWeight: 700,
+                color: '#4a4a4a',
+            },
+            h2: {
+                fontSize: '1.8rem',
+                fontWeight: 600,
+                color: '#6d6d6d',
+            },
+            body1: {
+                color: themeMode === 'light' ? '#333333' : '#e0e0e0',
+            },
+        },
+        components: {
+            MuiCard: {
+                styleOverrides: {
+                    root: {
+                        borderRadius: 8,
+                        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                        backgroundColor: themeMode === 'light' ? '#f5f5f5' : '#424242',
+                    },
+                },
+            },
+            MuiPaper: {
+                styleOverrides: {
+                    root: {
+                        borderRadius: 8,
+                        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                        backgroundColor: themeMode === 'light' ? '#f5f5f5' : '#424242',
+                    },
+                },
+            },
+            MuiLink: {
+                styleOverrides: {
+                    root: {
+                        color: '#d32f2f', // Red links
+                    },
+                },
+            },
+        },
+    });
 
     useEffect(() => {
         const token = localStorage.getItem('token');
@@ -116,6 +137,10 @@ function App() {
         setDrawerOpen(!drawerOpen);
     };
 
+    const toggleTheme = () => {
+        setThemeMode(themeMode === 'light' ? 'dark' : 'light');
+    };
+
     const drawerContent = (
         <Box sx={{ width: 250, p: 2 }}>
             {user && (
@@ -130,6 +155,7 @@ function App() {
                     { text: 'Home', path: '/' },
                     { text: 'Profile', path: '/profile' },
                     { text: 'Photos', path: '/photos' },
+                    { text: 'Shorts', path: '/shorts' },
                     { text: 'Notifications', path: '/notifications' },
                     { text: 'Groups', path: '/groups' },
                     { text: 'Pages', path: '/pages' },
@@ -181,7 +207,7 @@ function App() {
                                         ),
                                     }}
                                     sx={{ 
-                                        backgroundColor: 'white', 
+                                        backgroundColor: themeMode === 'light' ? '#f5f5f5' : '#424242', 
                                         borderRadius: 1, 
                                         ml: 2, 
                                         width: { xs: '100%', sm: 'auto' } 
@@ -192,6 +218,9 @@ function App() {
                                     <Badge badgeContent={unreadCount} color="secondary">
                                         <NotificationsIcon />
                                     </Badge>
+                                </IconButton>
+                                <IconButton color="inherit" onClick={toggleTheme}>
+                                    <Brightness4Icon />
                                 </IconButton>
                             </>
                         )}
@@ -225,6 +254,10 @@ function App() {
                                 <Route 
                                     path="/photos" 
                                     element={isAuthenticated ? <Photos /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/shorts" 
+                                    element={isAuthenticated ? <Shorts /> : <Navigate to="/login" />} 
                                 />
                                 <Route 
                                     path="/notifications" 
@@ -270,7 +303,7 @@ function App() {
                         </Grid>
                         <Grid item xs={12} md={4}>
                             {isAuthenticated && (
-                                <Box sx={{ p: 2, backgroundColor: 'white', borderRadius: 2, boxShadow: 1 }}>
+                                <Box sx={{ p: 2, backgroundColor: 'background.paper', borderRadius: 2, boxShadow: 1 }}>
                                     <Typography variant="h6">Connections</Typography>
                                     <List>
                                         {user?.friends?.map(friend => (
@@ -281,7 +314,7 @@ function App() {
                                     </List>
                                     <Typography variant="h6" sx={{ mt: 2 }}>Trends</Typography>
                                     <List>
-                                        {['#BetaRelease', '#SocialMedia', '#Amity'].map(trend => (
+                                        {trends.map(trend => (
                                             <ListItem key={trend}>
                                                 <ListItemText primary={trend} />
                                             </ListItem>

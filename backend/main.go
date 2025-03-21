@@ -6,1652 +6,941 @@ import (
     "fmt"
     "log"
     "net/http"
+    "os"
     "strings"
     "time"
 
     "github.com/dgrijalva/jwt-go"
     "github.com/gorilla/mux"
+    "github.com/the-real-kodoninja/Amity/backend/models"
+    "github.com/the-real-kodoninja/Amity/backend/utils"
     "go.mongodb.org/mongo-driver/bson"
     "go.mongodb.org/mongo-driver/bson/primitive"
     "go.mongodb.org/mongo-driver/mongo"
     "go.mongodb.org/mongo-driver/mongo/options"
-    "github.com/the-real-kodoninja/Amity/backend/models"
 )
 
-type App struct {
-    Router *mux.Router
-    DB     *mongo.Client
-}
+var client *mongo.Client
+var userCollection *mongo.Collection
+var postCollection *mongo.Collection
 
-var jwtSecret = []byte("your-secret-key")
-
-func (a *App) Initialize() {
-    clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
-    client, err := mongo.Connect(context.Background(), clientOptions)
+func main() {
+    // Connect to MongoDB
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    var err error
+    client, err = mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
     if err != nil {
         log.Fatal(err)
     }
+    userCollection = client.Database("amity").Collection("users")
+    postCollection = client.Database("amity").Collection("posts")
 
-    err = client.Ping(context.Background(), nil)
-    if err != nil {
-        log.Fatal(err)
+    // Set up router
+    r := mux.NewRouter()
+    r.HandleFunc("/register", register).Methods("POST")
+    r.HandleFunc("/login", login).Methods("POST")
+    r.HandleFunc("/users/{username}", getUser).Methods("GET")
+    r.HandleFunc("/users/{username}/update", updateUser).Methods("PUT")
+    r.HandleFunc("/feed", getFeed).Methods("GET")
+    r.HandleFunc("/explore", getExplore).Methods("GET")
+    r.HandleFunc("/posts", createPost).Methods("POST")
+    r.HandleFunc("/posts/{id}/like", likePost).Methods("POST")
+    r.HandleFunc("/posts/{id}/react", reactToPost).Methods("POST")
+    r.HandleFunc("/posts/{id}/share", sharePost).Methods("POST")
+    r.HandleFunc("/posts/{id}/hide", hidePost).Methods("POST")
+    r.HandleFunc("/posts/{id}/comment", addComment).Methods("POST")
+    r.HandleFunc("/posts/{id}/comment/{commentId}/reply", addReply).Methods("POST")
+    r.HandleFunc("/shorts", getShorts).Methods("GET")
+    r.HandleFunc("/groups", getGroups).Methods("GET")
+    r.HandleFunc("/groups", createGroup).Methods("POST")
+    r.HandleFunc("/groups/{id}", getGroup).Methods("GET")
+    r.HandleFunc("/groups/{id}/join", joinGroup).Methods("POST")
+    r.HandleFunc("/groups/{id}/leave", leaveGroup).Methods("POST")
+    r.HandleFunc("/pages", getPages).Methods("GET")
+    r.HandleFunc("/pages", createPage).Methods("POST")
+    r.HandleFunc("/pages/{id}", getPage).Methods("GET")
+    r.HandleFunc("/pages/{id}/follow", followPage).Methods("POST")
+    r.HandleFunc("/pages/{id}/unfollow", unfollowPage).Methods("POST")
+    r.HandleFunc("/friend-requests", getFriendRequests).Methods("GET")
+    r.HandleFunc("/friend-requests", sendFriendRequest).Methods("POST")
+    r.HandleFunc("/friend-requests/{id}/accept", acceptFriendRequest).Methods("POST")
+    r.HandleFunc("/friend-requests/{id}/reject", rejectFriendRequest).Methods("POST")
+    r.HandleFunc("/users/{username}/follow", followUser).Methods("POST")
+    r.HandleFunc("/users/{username}/unfollow", unfollowUser).Methods("POST")
+    r.HandleFunc("/users/{username}/block", blockUser).Methods("POST")
+    r.HandleFunc("/users/{username}/unblock", unblockUser).Methods("POST")
+    r.HandleFunc("/notifications", getNotifications).Methods("GET")
+    r.HandleFunc("/notifications/{id}/read", markNotificationRead).Methods("POST")
+    r.HandleFunc("/messages", sendMessage).Methods("POST")
+    r.HandleFunc("/messages/{username}", getMessages).Methods("GET")
+    r.HandleFunc("/lists", createList).Methods("POST")
+    r.HandleFunc("/lists", getLists).Methods("GET")
+    r.HandleFunc("/lists/{id}/add", addToList).Methods("POST")
+    r.HandleFunc("/hangouts", createHangout).Methods("POST")
+    r.HandleFunc("/hangouts", getHangouts).Methods("GET")
+    r.HandleFunc("/hangouts/{id}/join", joinHangout).Methods("POST")
+    r.HandleFunc("/hangouts/{id}/leave", leaveHangout).Methods("POST")
+    r.HandleFunc("/search/users", searchUsers).Methods("GET")
+
+    // File upload endpoint
+    r.HandleFunc("/upload", uploadFile).Methods("POST")
+
+    fmt.Println("Server starting on :8080")
+    log.Fatal(http.ListenAndServe(":8080", r))
+}
+
+func register(w http.ResponseWriter, r *http.Request) {
+    var user models.User
+    if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    user.ID = primitive.NewObjectID()
+    user.Followers = 0
+    user.Following = []string{}
+    user.Friends = []string{}
+    user.BlockedUsers = []string{}
+    user.Notifications = []models.Notification{}
+    user.Settings = models.UserSettings{
+        NSFWEnabled:       false,
+        ProfileVisibility: "public",
+        Messaging:         "everyone",
     }
 
-    a.DB = client
-    a.Router = mux.NewRouter()
-    a.initializeRoutes()
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := userCollection.InsertOne(ctx, user)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    token := generateToken(user.Username)
+    json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-func (a *App) initializeRoutes() {
-    fs := http.FileServer(http.Dir("../frontend/build"))
-    a.Router.PathPrefix("/").Handler(http.StripPrefix("/", fs)).Methods("GET")
-
-    a.Router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintf(w, "Amity Backend is running!")
-    }).Methods("GET")
-    a.Router.HandleFunc("/login", a.login).Methods("POST")
-    a.Router.HandleFunc("/register", a.register).Methods("POST")
-
-    api := a.Router.PathPrefix("/api").Subrouter()
-    api.Use(a.jwtMiddleware)
-    api.HandleFunc("/users/{username}", a.getUser).Methods("GET")
-    api.HandleFunc("/users/{username}/update", a.updateUser).Methods("PUT")
-    api.HandleFunc("/feed", a.getFeed).Methods("GET")
-    api.HandleFunc("/explore", a.getExplore).Methods("GET")
-    api.HandleFunc("/users/{username}/photos", a.getUserPhotos).Methods("GET")
-    api.HandleFunc("/posts", a.createPost).Methods("POST")
-    api.HandleFunc("/posts/{id}/like", a.likePost).Methods("POST")
-    api.HandleFunc("/posts/{id}/share", a.sharePost).Methods("POST")
-    api.HandleFunc("/posts/{id}/comment", a.addComment).Methods("POST")
-    api.HandleFunc("/posts/{id}/mint", a.mintPost).Methods("POST")
-    api.HandleFunc("/photos/{id}/mint", a.mintPhoto).Methods("POST")
-    api.HandleFunc("/search/users", a.searchUsers).Methods("GET")
-    api.HandleFunc("/groups", a.createGroup).Methods("POST")
-    api.HandleFunc("/groups", a.getGroups).Methods("GET")
-    api.HandleFunc("/groups/{id}", a.getGroup).Methods("GET")
-    api.HandleFunc("/groups/{id}/join", a.joinGroup).Methods("POST")
-    api.HandleFunc("/groups/{id}/leave", a.leaveGroup).Methods("POST")
-    api.HandleFunc("/pages", a.createPage).Methods("POST")
-    api.HandleFunc("/pages", a.getPages).Methods("GET")
-    api.HandleFunc("/pages/{id}", a.getPage).Methods("GET")
-    api.HandleFunc("/pages/{id}/follow", a.followPage).Methods("POST")
-    api.HandleFunc("/pages/{id}/unfollow", a.unfollowPage).Methods("POST")
-    api.HandleFunc("/friend-requests", a.sendFriendRequest).Methods("POST")
-    api.HandleFunc("/friend-requests", a.getFriendRequests).Methods("GET")
-    api.HandleFunc("/friend-requests/{id}/accept", a.acceptFriendRequest).Methods("POST")
-    api.HandleFunc("/friend-requests/{id}/reject", a.rejectFriendRequest).Methods("POST")
-    api.HandleFunc("/users/{username}/follow", a.followUser).Methods("POST")
-    api.HandleFunc("/users/{username}/unfollow", a.unfollowUser).Methods("POST")
-    api.HandleFunc("/users/{username}/block", a.blockUser).Methods("POST")
-    api.HandleFunc("/users/{username}/unblock", a.unblockUser).Methods("POST")
-    api.HandleFunc("/notifications", a.getNotifications).Methods("GET")
-    api.HandleFunc("/notifications/{id}/read", a.markNotificationRead).Methods("POST")
-    api.HandleFunc("/messages", a.sendMessage).Methods("POST")
-    api.HandleFunc("/messages/{username}", a.getMessages).Methods("GET")
-    api.HandleFunc("/lists", a.createList).Methods("POST")
-    api.HandleFunc("/lists", a.getLists).Methods("GET")
-    api.HandleFunc("/lists/{id}/add", a.addToList).Methods("POST")
-    api.HandleFunc("/hangouts", a.createHangout).Methods("POST")
-    api.HandleFunc("/hangouts", a.getHangouts).Methods("GET")
-    api.HandleFunc("/hangouts/{id}/join", a.joinHangout).Methods("POST")
-    api.HandleFunc("/hangouts/{id}/leave", a.leaveHangout).Methods("POST")
-
-    a.Router.HandleFunc("/.well-known/webfinger", a.handleWebFinger).Methods("GET")
-    a.Router.HandleFunc("/users/{username}/outbox", a.handleOutbox).Methods("GET")
-    a.Router.HandleFunc("/users/{username}/inbox", a.handleInbox).Methods("POST")
-}
-
-func (a *App) login(w http.ResponseWriter, r *http.Request) {
+func login(w http.ResponseWriter, r *http.Request) {
     var creds struct {
         Username string `json:"username"`
         Password string `json:"password"`
     }
     if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-        http.Error(w, "Invalid credentials", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
 
-    collection := a.DB.Database("amity").Collection("users")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
     var user models.User
-    err := collection.FindOne(ctx, bson.M{"username": creds.Username}).Decode(&user)
-    if err != nil || user.Password != creds.Password { // In production, use password hashing
-        http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-        return
-    }
-
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "username": creds.Username,
-        "exp":      time.Now().Add(time.Hour * 24).Unix(),
-    })
-
-    tokenString, err := token.SignedString(jwtSecret)
+    err := userCollection.FindOne(ctx, bson.M{"username": creds.Username, "password": creds.Password}).Decode(&user)
     if err != nil {
-        http.Error(w, "Error generating token", http.StatusInternalServerError)
+        http.Error(w, "Invalid credentials", http.StatusUnauthorized)
         return
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+    token := generateToken(user.Username)
+    json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-func (a *App) register(w http.ResponseWriter, r *http.Request) {
-    var user models.User
-    if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-        http.Error(w, "Invalid user data", http.StatusBadRequest)
-        return
-    }
-
-    user.Followers = 0
-    user.Following = []string{}
-    user.Friends = []string{}
-    user.BlockedUsers = []string{}
-    user.ProfilePhoto = "https://via.placeholder.com/100"
-    user.Banner = "https://via.placeholder.com/1500x500"
-    user.Settings = models.UserSettings{
-        NSFWEnabled: false,
-        Privacy: struct {
-            ProfileVisibility string `json:"profile_visibility" bson:"profile_visibility"`
-            Messaging         string `json:"messaging" bson:"messaging"`
-        }{
-            ProfileVisibility: "public",
-            Messaging:         "everyone",
-        },
-    }
-
-    collection := a.DB.Database("amity").Collection("users")
+func getUser(w http.ResponseWriter, r *http.Request) {
+    username := mux.Vars(r)["username"]
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    _, err := collection.InsertOne(ctx, user)
-    if err != nil {
-        http.Error(w, "Error creating user", http.StatusInternalServerError)
-        return
-    }
-
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(user)
-}
-
-func (a *App) jwtMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        authHeader := r.Header.Get("Authorization")
-        if authHeader == "" {
-            http.Error(w, "Missing token", http.StatusUnauthorized)
-            return
-        }
-
-        if !strings.HasPrefix(authHeader, "Bearer ") {
-            http.Error(w, "Invalid token format", http.StatusUnauthorized)
-            return
-        }
-
-        tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-        token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-                return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-            }
-            return jwtSecret, nil
-        })
-
-        if err != nil || !token.Valid {
-            http.Error(w, "Invalid token", http.StatusUnauthorized)
-            return
-        }
-
-        claims, ok := token.Claims.(jwt.MapClaims)
-        if ok && token.Valid {
-            ctx := context.WithValue(r.Context(), "username", claims["username"])
-            r = r.WithContext(ctx)
-        }
-
-        next.ServeHTTP(w, r)
-    })
-}
-
-func (a *App) getUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    username := vars["username"]
-
-    collection := a.DB.Database("amity").Collection("users")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
     var user models.User
-    err := collection.FindOne(ctx, bson.M{"username": username}).Decode(&user)
+    err := userCollection.FindOne(ctx, bson.M{"username": username}).Decode(&user)
     if err != nil {
         http.Error(w, "User not found", http.StatusNotFound)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(user)
+    userJSON := struct {
+        Username     string          `json:"username"`
+        Location     string          `json:"location"`
+        Followers    int             `json:"followers"`
+        Following    []string        `json:"following"`
+        Friends      []string        `json:"friends"`
+        BlockedUsers []string        `json:"blocked_users"`
+        ProfilePhoto string          `json:"profile_photo"`
+        BannerPhoto  string          `json:"banner_photo"`
+        Settings     models.UserSettings `json:"settings"`
+    }{
+        Username:     user.Username,
+        Location:     user.Location,
+        Followers:    user.Followers,
+        Following:    user.Following,
+        Friends:      user.Friends,
+        BlockedUsers: user.BlockedUsers,
+        ProfilePhoto: user.ProfilePhoto,
+        BannerPhoto:  user.BannerPhoto,
+        Settings:     user.Settings,
+    }
+    json.NewEncoder(w).Encode(userJSON)
 }
 
-func (a *App) updateUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    username := vars["username"]
-
+func updateUser(w http.ResponseWriter, r *http.Request) {
+    username := mux.Vars(r)["username"]
     var updates struct {
-        ProfilePhoto string           `json:"profile_photo"`
-        Banner       string           `json:"banner"`
+        Location     string             `json:"location"`
+        ProfilePhoto string             `json:"profile_photo"`
+        BannerPhoto  string             `json:"banner_photo"`
         Settings     models.UserSettings `json:"settings"`
     }
     if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
-        http.Error(w, "Invalid update data", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
 
-    collection := a.DB.Database("amity").Collection("users")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    update := bson.M{"$set": bson.M{}}
-    if updates.ProfilePhoto != "" {
-        update["$set"].(bson.M)["profile_photo"] = updates.ProfilePhoto
+    updateFields := bson.M{}
+    if updates.Location != "" {
+        updateFields["location"] = updates.Location
     }
-    if updates.Banner != "" {
-        update["$set"].(bson.M)["banner"] = updates.Banner
+    if updates.ProfilePhoto != "" {
+        updateFields["profile_photo"] = updates.ProfilePhoto
+    }
+    if updates.BannerPhoto != "" {
+        updateFields["banner_photo"] = updates.BannerPhoto
     }
     if updates.Settings != (models.UserSettings{}) {
-        update["$set"].(bson.M)["settings"] = updates.Settings
+        updateFields["settings"] = updates.Settings
     }
 
-    result, err := collection.UpdateOne(ctx, bson.M{"username": username}, update)
-    if err != nil {
-        http.Error(w, "Error updating user", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "User not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("User updated"))
-}
-
-func (a *App) getFeed(w http.ResponseWriter, r *http.Request) {
-    collection := a.DB.Database("amity").Collection("posts")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{})
+    _, err := userCollection.UpdateOne(ctx, bson.M{"username": username}, bson.M{"$set": updateFields})
     if err != nil {
-        http.Error(w, "Error fetching feed", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    defer cursor.Close(ctx)
+    w.WriteHeader(http.StatusOK)
+}
 
+func getFeed(w http.ResponseWriter, r *http.Request) {
+    filter := r.URL.Query().Get("filter")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    query := bson.M{}
+    if filter != "" && filter != "all" {
+        query["media.type"] = filter
+    }
+    cursor, err := postCollection.Find(ctx, query)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
     var posts []models.Post
     if err := cursor.All(ctx, &posts); err != nil {
-        http.Error(w, "Error decoding posts", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(posts)
 }
 
-func (a *App) getExplore(w http.ResponseWriter, r *http.Request) {
-    // Fetch trending posts, groups, pages, and users (simplified)
-    postsCollection := a.DB.Database("amity").Collection("posts")
-    groupsCollection := a.DB.Database("amity").Collection("groups")
-    pagesCollection := a.DB.Database("amity").Collection("pages")
-    usersCollection := a.DB.Database("amity").Collection("users")
+func getExplore(w http.ResponseWriter, r *http.Request) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    var posts []models.Post
-    postsCursor, err := postsCollection.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"likes": -1}).SetLimit(10))
-    if err == nil {
-        postsCursor.All(ctx, &posts)
-        postsCursor.Close(ctx)
-    }
-
-    var groups []models.Group
-    groupsCursor, err := groupsCollection.Find(ctx, bson.M{}, options.Find().SetLimit(5))
-    if err == nil {
-        groupsCursor.All(ctx, &groups)
-        groupsCursor.Close(ctx)
-    }
-
-    var pages []models.Page
-    pagesCursor, err := pagesCollection.Find(ctx, bson.M{}, options.Find().SetLimit(5))
-    if err == nil {
-        pagesCursor.All(ctx, &pages)
-        pagesCursor.Close(ctx)
-    }
-
-    var users []models.User
-    usersCursor, err := usersCollection.Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"followers": -1}).SetLimit(5))
-    if err == nil {
-        usersCursor.All(ctx, &users)
-        usersCursor.Close(ctx)
-    }
-
-    response := map[string]interface{}{
-        "posts":  posts,
-        "groups": groups,
-        "pages":  pages,
-        "users":  users,
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(response)
-}
-
-func (a *App) getUserPhotos(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    username := vars["username"]
-
-    collection := a.DB.Database("amity").Collection("photos")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{"username": username})
+    cursor, err := postCollection.Find(ctx, bson.M{})
     if err != nil {
-        http.Error(w, "Error fetching photos", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    defer cursor.Close(ctx)
-
-    var photos []models.Photo
-    if err := cursor.All(ctx, &photos); err != nil {
-        http.Error(w, "Error decoding photos", http.StatusInternalServerError)
+    var posts []models.Post
+    if err := cursor.All(ctx, &posts); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(photos)
+    json.NewEncoder(w).Encode(struct {
+        Posts []models.Post `json:"posts"`
+    }{Posts: posts})
 }
 
-func (a *App) createPost(w http.ResponseWriter, r *http.Request) {
+func createPost(w http.ResponseWriter, r *http.Request) {
     var post models.Post
     if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
-        http.Error(w, "Invalid post data", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
 
-    post.ActivityID = fmt.Sprintf("https://amity.example.com/posts/%d", time.Now().UnixNano())
-    post.ActivityType = "Create"
+    if len(post.Content) > 280 {
+        http.Error(w, "Post exceeds 280 characters", http.StatusBadRequest)
+        return
+    }
+
+    post.ID = primitive.NewObjectID()
+    post.Timestamp = time.Now().Format(time.RFC3339)
     post.Likes = 0
+    post.Reactions = make(map[string]int)
     post.Shares = 0
     post.Comments = []models.Comment{}
+    post.HiddenBy = []string{}
 
-    collection := a.DB.Database("amity").Collection("posts")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    result, err := collection.InsertOne(ctx, post)
+    _, err := postCollection.InsertOne(ctx, post)
     if err != nil {
-        http.Error(w, "Error creating post", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    log.Printf("Created post with ID: %v", result.InsertedID)
+    // Notify followers
+    var user models.User
+    err = userCollection.FindOne(ctx, bson.M{"username": post.Username}).Decode(&user)
+    if err != nil {
+        http.Error(w, "User not found", http.StatusNotFound)
+        return
+    }
+    for _, follower := range user.Following {
+        notification := models.Notification{
+            ID:        primitive.NewObjectID(),
+            Type:      "post",
+            From:      post.Username,
+            Content:   fmt.Sprintf("%s created a new post", post.Username),
+            RelatedID: post.ID.Hex(),
+            Timestamp: time.Now().Format(time.RFC3339),
+            Read:      false,
+        }
+        _, err := userCollection.UpdateOne(ctx,
+            bson.M{"username": follower},
+            bson.M{"$push": bson.M{"notifications": notification}},
+        )
+        if err != nil {
+            log.Printf("Error sending notification to %s: %v", follower, err)
+        }
+    }
 
-    w.WriteHeader(http.StatusCreated)
     json.NewEncoder(w).Encode(post)
 }
 
-func (a *App) likePost(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    postID := vars["id"]
-
-    collection := a.DB.Database("amity").Collection("posts")
+func likePost(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    username := r.Header.Get("username") // Extract from JWT in a real app
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(postID)
+    _, err := postCollection.UpdateOne(ctx, bson.M{"_id": mustObjectID(postID)}, bson.M{"$inc": bson.M{"likes": 1}})
     if err != nil {
-        http.Error(w, "Invalid post ID", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
+    // Notify post owner
     var post models.Post
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&post)
+    err = postCollection.FindOne(ctx, bson.M{"_id": mustObjectID(postID)}).Decode(&post)
     if err != nil {
         http.Error(w, "Post not found", http.StatusNotFound)
         return
     }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$inc": bson.M{"likes": 1}},
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "like",
+        From:      username,
+        Content:   fmt.Sprintf("%s liked your post", username),
+        RelatedID: postID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": post.Username},
+        bson.M{"$push": bson.M{"notifications": notification}},
     )
     if err != nil {
-        http.Error(w, "Error liking post", http.StatusInternalServerError)
-        return
+        log.Printf("Error sending notification: %v", err)
     }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Post not found", http.StatusNotFound)
-        return
-    }
-
-    // Create a notification
-    username := r.Context().Value("username").(string)
-    a.createNotification(post.Username, "like", username, fmt.Sprintf("%s liked your post", username), postID)
 
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Post liked"))
 }
 
-func (a *App) sharePost(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    postID := vars["id"]
+func reactToPost(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    var reaction struct {
+        Type string `json:"type"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&reaction); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
 
-    collection := a.DB.Database("amity").Collection("posts")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(postID)
-    if err != nil {
-        http.Error(w, "Invalid post ID", http.StatusBadRequest)
-        return
-    }
-
-    var post models.Post
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&post)
-    if err != nil {
-        http.Error(w, "Post not found", http.StatusNotFound)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$inc": bson.M{"shares": 1}},
+    _, err := postCollection.UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(postID)},
+        bson.M{"$inc": bson.M{"reactions." + reaction.Type: 1}},
     )
     if err != nil {
-        http.Error(w, "Error sharing post", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if result.MatchedCount == 0 {
+
+    // Notify post owner
+    var post models.Post
+    err = postCollection.FindOne(ctx, bson.M{"_id": mustObjectID(postID)}).Decode(&post)
+    if err != nil {
         http.Error(w, "Post not found", http.StatusNotFound)
         return
     }
-
-    username := r.Context().Value("username").(string)
-    a.createNotification(post.Username, "share", username, fmt.Sprintf("%s shared your post", username), postID)
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "reaction",
+        From:      username,
+        Content:   fmt.Sprintf("%s reacted to your post with %s", username, reaction.Type),
+        RelatedID: postID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": post.Username},
+        bson.M{"$push": bson.M{"notifications": notification}},
+    )
+    if err != nil {
+        log.Printf("Error sending notification: %v", err)
+    }
 
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Post shared"))
 }
 
-func (a *App) addComment(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    postID := vars["id"]
+func sharePost(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := postCollection.UpdateOne(ctx, bson.M{"_id": mustObjectID(postID)}, bson.M{"$inc": bson.M{"shares": 1}})
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
+    // Notify post owner
+    var post models.Post
+    err = postCollection.FindOne(ctx, bson.M{"_id": mustObjectID(postID)}).Decode(&post)
+    if err != nil {
+        http.Error(w, "Post not found", http.StatusNotFound)
+        return
+    }
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "share",
+        From:      username,
+        Content:   fmt.Sprintf("%s shared your post", username),
+        RelatedID: postID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": post.Username},
+        bson.M{"$push": bson.M{"notifications": notification}},
+    )
+    if err != nil {
+        log.Printf("Error sending notification: %v", err)
+    }
+
+    w.WriteHeader(http.StatusOK)
+}
+
+func hidePost(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := postCollection.UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(postID)},
+        bson.M{"$addToSet": bson.M{"hidden_by": username}},
+    )
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
+
+func addComment(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
     var comment models.Comment
     if err := json.NewDecoder(r.Body).Decode(&comment); err != nil {
-        http.Error(w, "Invalid comment data", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
-
+    comment.ID = primitive.NewObjectID()
     comment.Timestamp = time.Now().Format(time.RFC3339)
+    comment.Replies = []models.Comment{}
 
-    collection := a.DB.Database("amity").Collection("posts")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(postID)
-    if err != nil {
-        http.Error(w, "Invalid post ID", http.StatusBadRequest)
-        return
-    }
-
-    var post models.Post
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&post)
-    if err != nil {
-        http.Error(w, "Post not found", http.StatusNotFound)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
+    _, err := postCollection.UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(postID)},
         bson.M{"$push": bson.M{"comments": comment}},
     )
     if err != nil {
-        http.Error(w, "Error adding comment", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Post not found", http.StatusNotFound)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    username := r.Context().Value("username").(string)
-    a.createNotification(post.Username, "comment", username, fmt.Sprintf("%s commented on your post", username), postID)
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Comment added"))
-}
-
-func (a *App) mintPost(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    postID := vars["id"]
-
-    // Simulate minting a post as an NFT (requires blockchain integration in production)
-    collection := a.DB.Database("amity").Collection("posts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(postID)
-    if err != nil {
-        http.Error(w, "Invalid post ID", http.StatusBadRequest)
-        return
-    }
-
+    // Notify post owner
     var post models.Post
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&post)
+    err = postCollection.FindOne(ctx, bson.M{"_id": mustObjectID(postID)}).Decode(&post)
     if err != nil {
         http.Error(w, "Post not found", http.StatusNotFound)
         return
     }
-
-    // In a real app, integrate with a blockchain (e.g., Internet Computer) to mint the post as an NFT
-    log.Printf("Minted post %s as NFT (simulated)", postID)
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "comment",
+        From:      username,
+        Content:   fmt.Sprintf("%s commented on your post", username),
+        RelatedID: postID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": post.Username},
+        bson.M{"$push": bson.M{"notifications": notification}},
+    )
+    if err != nil {
+        log.Printf("Error sending notification: %v", err)
+    }
 
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Post minted as NFT"))
 }
 
-func (a *App) mintPhoto(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    photoID := vars["id"]
+func addReply(w http.ResponseWriter, r *http.Request) {
+    postID := mux.Vars(r)["id"]
+    commentID := mux.Vars(r)["commentId"]
+    username := r.Header.Get("username")
+    var reply models.Comment
+    if err := json.NewDecoder(r.Body).Decode(&reply); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    reply.ID = primitive.NewObjectID()
+    reply.Timestamp = time.Now().Format(time.RFC3339)
+    reply.Replies = []models.Comment{}
 
-    // Simulate minting a photo as an NFT
-    collection := a.DB.Database("amity").Collection("photos")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(photoID)
+    _, err := postCollection.UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(postID), "comments._id": mustObjectID(commentID)},
+        bson.M{"$push": bson.M{"comments.$.replies": reply}},
+    )
     if err != nil {
-        http.Error(w, "Invalid photo ID", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    var photo models.Photo
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&photo)
+    // Notify post owner and comment author
+    var post models.Post
+    err = postCollection.FindOne(ctx, bson.M{"_id": mustObjectID(postID)}).Decode(&post)
     if err != nil {
-        http.Error(w, "Photo not found", http.StatusNotFound)
+        http.Error(w, "Post not found", http.StatusNotFound)
         return
     }
-
-    log.Printf("Minted photo %s as NFT (simulated)", photoID)
+    var comment models.Comment
+    for _, c := range post.Comments {
+        if c.ID.Hex() == commentID {
+            comment = c
+            break
+        }
+    }
+    if comment.Username != "" {
+        notification := models.Notification{
+            ID:        primitive.NewObjectID(),
+            Type:      "reply",
+            From:      username,
+            Content:   fmt.Sprintf("%s replied to your comment", username),
+            RelatedID: postID,
+            Timestamp: time.Now().Format(time.RFC3339),
+            Read:      false,
+        }
+        _, err = userCollection.UpdateOne(ctx,
+            bson.M{"username": comment.Username},
+            bson.M{"$push": bson.M{"notifications": notification}},
+        )
+        if err != nil {
+            log.Printf("Error sending notification: %v", err)
+        }
+    }
 
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Photo minted as NFT"))
 }
 
-func (a *App) searchUsers(w http.ResponseWriter, r *http.Request) {
-    query := r.URL.Query().Get("q")
-    if query == "" {
-        http.Error(w, "Missing query parameter", http.StatusBadRequest)
-        return
-    }
-
-    collection := a.DB.Database("amity").Collection("users")
+func getShorts(w http.ResponseWriter, r *http.Request) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    regex := bson.M{"username": bson.M{"$regex": query, "$options": "i"}}
-    cursor, err := collection.Find(ctx, regex)
+    cursor, err := postCollection.Find(ctx, bson.M{"is_short": true})
     if err != nil {
-        http.Error(w, "Error searching users", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    defer cursor.Close(ctx)
-
-    var users []models.User
-    if err := cursor.All(ctx, &users); err != nil {
-        http.Error(w, "Error decoding users", http.StatusInternalServerError)
+    var shorts []models.Post
+    if err := cursor.All(ctx, &shorts); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(users)
+    json.NewEncoder(w).Encode(shorts)
 }
 
-func (a *App) createGroup(w http.ResponseWriter, r *http.Request) {
-    var group models.Group
-    if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
-        http.Error(w, "Invalid group data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    group.Creator = username
-    group.Members = []string{username}
-    group.CreatedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("groups")
+func getGroups(w http.ResponseWriter, r *http.Request) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    result, err := collection.InsertOne(ctx, group)
+    cursor, err := client.Database("amity").Collection("groups").Find(ctx, bson.M{})
     if err != nil {
-        http.Error(w, "Error creating group", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    groupID := result.InsertedID.(primitive.ObjectID).Hex()
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(group)
-}
-
-func (a *App) getGroups(w http.ResponseWriter, r *http.Request) {
-    collection := a.DB.Database("amity").Collection("groups")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{})
-    if err != nil {
-        http.Error(w, "Error fetching groups", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
     var groups []models.Group
     if err := cursor.All(ctx, &groups); err != nil {
-        http.Error(w, "Error decoding groups", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(groups)
 }
 
-func (a *App) getGroup(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    groupID := vars["id"]
+func createGroup(w http.ResponseWriter, r *http.Request) {
+    var group models.Group
+    if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    group.ID = primitive.NewObjectID()
+    group.Members = []string{group.Creator}
 
-    collection := a.DB.Database("amity").Collection("groups")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(groupID)
+    _, err := client.Database("amity").Collection("groups").InsertOne(ctx, group)
     if err != nil {
-        http.Error(w, "Invalid group ID", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    var group models.Group
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&group)
-    if err != nil {
-        http.Error(w, "Group not found", http.StatusNotFound)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(group)
 }
 
-func (a *App) joinGroup(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    groupID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("groups")
+func getGroup(w http.ResponseWriter, r *http.Request) {
+    groupID := mux.Vars(r)["id"]
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(groupID)
+    var group models.Group
+    err := client.Database("amity").Collection("groups").FindOne(ctx, bson.M{"_id": mustObjectID(groupID)}).Decode(&group)
     if err != nil {
-        http.Error(w, "Invalid group ID", http.StatusBadRequest)
+        http.Error(w, "Group not found", http.StatusNotFound)
         return
     }
+    json.NewEncoder(w).Encode(group)
+}
 
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
+func joinGroup(w http.ResponseWriter, r *http.Request) {
+    groupID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := client.Database("amity").Collection("groups").UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(groupID)},
         bson.M{"$addToSet": bson.M{"members": username}},
     )
     if err != nil {
-        http.Error(w, "Error joining group", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Group not found", http.StatusNotFound)
-        return
-    }
-
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Joined group"))
 }
 
-func (a *App) leaveGroup(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    groupID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("groups")
+func leaveGroup(w http.ResponseWriter, r *http.Request) {
+    groupID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(groupID)
-    if err != nil {
-        http.Error(w, "Invalid group ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
+    _, err := client.Database("amity").Collection("groups").UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(groupID)},
         bson.M{"$pull": bson.M{"members": username}},
     )
     if err != nil {
-        http.Error(w, "Error leaving group", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Group not found", http.StatusNotFound)
-        return
-    }
-
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Left group"))
 }
 
-func (a *App) createPage(w http.ResponseWriter, r *http.Request) {
-    var page models.Page
-    if err := json.NewDecoder(r.Body).Decode(&page); err != nil {
-        http.Error(w, "Invalid page data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    page.Creator = username
-    page.Followers = []string{username}
-    page.CreatedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("pages")
+func getPages(w http.ResponseWriter, r *http.Request) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    result, err := collection.InsertOne(ctx, page)
+    cursor, err := client.Database("amity").Collection("pages").Find(ctx, bson.M{})
     if err != nil {
-        http.Error(w, "Error creating page", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    pageID := result.InsertedID.(primitive.ObjectID).Hex()
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(page)
-}
-
-func (a *App) getPages(w http.ResponseWriter, r *http.Request) {
-    collection := a.DB.Database("amity").Collection("pages")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{})
-    if err != nil {
-        http.Error(w, "Error fetching pages", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
     var pages []models.Page
     if err := cursor.All(ctx, &pages); err != nil {
-        http.Error(w, "Error decoding pages", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(pages)
 }
 
-func (a *App) getPage(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    pageID := vars["id"]
+func createPage(w http.ResponseWriter, r *http.Request) {
+    var page models.Page
+    if err := json.NewDecoder(r.Body).Decode(&page); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    page.ID = primitive.NewObjectID()
+    page.Followers = []string{page.Creator}
 
-    collection := a.DB.Database("amity").Collection("pages")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(pageID)
+    _, err := client.Database("amity").Collection("pages").InsertOne(ctx, page)
     if err != nil {
-        http.Error(w, "Invalid page ID", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    var page models.Page
-    err = collection.FindOne(ctx, bson.M{"_id": objectID}).Decode(&page)
-    if err != nil {
-        http.Error(w, "Page not found", http.StatusNotFound)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(page)
 }
 
-func (a *App) followPage(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    pageID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("pages")
+func getPage(w http.ResponseWriter, r *http.Request) {
+    pageID := mux.Vars(r)["id"]
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(pageID)
+    var page models.Page
+    err := client.Database("amity").Collection("pages").FindOne(ctx, bson.M{"_id": mustObjectID(pageID)}).Decode(&page)
     if err != nil {
-        http.Error(w, "Invalid page ID", http.StatusBadRequest)
+        http.Error(w, "Page not found", http.StatusNotFound)
         return
     }
+    json.NewEncoder(w).Encode(page)
+}
 
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
+func followPage(w http.ResponseWriter, r *http.Request) {
+    pageID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := client.Database("amity").Collection("pages").UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(pageID)},
         bson.M{"$addToSet": bson.M{"followers": username}},
     )
     if err != nil {
-        http.Error(w, "Error following page", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Page not found", http.StatusNotFound)
-        return
-    }
-
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Followed page"))
 }
 
-func (a *App) unfollowPage(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    pageID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("pages")
+func unfollowPage(w http.ResponseWriter, r *http.Request) {
+    pageID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(pageID)
-    if err != nil {
-        http.Error(w, "Invalid page ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
+    _, err := client.Database("amity").Collection("pages").UpdateOne(ctx,
+        bson.M{"_id": mustObjectID(pageID)},
         bson.M{"$pull": bson.M{"followers": username}},
     )
     if err != nil {
-        http.Error(w, "Error unfollowing page", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Page not found", http.StatusNotFound)
-        return
-    }
-
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Unfollowed page"))
 }
 
-func (a *App) sendFriendRequest(w http.ResponseWriter, r *http.Request) {
-    var request models.FriendRequest
-    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-        http.Error(w, "Invalid friend request data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    request.From = username
-    request.Status = "pending"
-    request.CreatedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("friend_requests")
+func getFriendRequests(w http.ResponseWriter, r *http.Request) {
+    username := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    result, err := collection.InsertOne(ctx, request)
+    cursor, err := client.Database("amity").Collection("friend_requests").Find(ctx, bson.M{"to": username})
     if err != nil {
-        http.Error(w, "Error sending friend request", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    a.createNotification(request.To, "friend_request", username, fmt.Sprintf("%s sent you a friend request", username), result.InsertedID.(primitive.ObjectID).Hex())
-
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(request)
-}
-
-func (a *App) getFriendRequests(w http.ResponseWriter, r *http.Request) {
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("friend_requests")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{"to": username, "status": "pending"})
-    if err != nil {
-        http.Error(w, "Error fetching friend requests", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
     var requests []models.FriendRequest
     if err := cursor.All(ctx, &requests); err != nil {
-        http.Error(w, "Error decoding friend requests", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-    w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(requests)
 }
 
-func (a *App) acceptFriendRequest(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    requestID := vars["id"]
+func sendFriendRequest(w http.ResponseWriter, r *http.Request) {
+    var request models.FriendRequest
+    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    request.ID = primitive.NewObjectID()
+    request.Timestamp = time.Now().Format(time.RFC3339)
 
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("friend_requests")
-    usersCollection := a.DB.Database("amity").Collection("users")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(requestID)
+    _, err := client.Database("amity").Collection("friend_requests").InsertOne(ctx, request)
     if err != nil {
-        http.Error(w, "Invalid request ID", http.StatusBadRequest)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
+    // Notify recipient
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "friend_request",
+        From:      request.From,
+        Content:   fmt.Sprintf("%s sent you a friend request", request.From),
+        RelatedID: request.ID.Hex(),
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": request.To},
+        bson.M{"$push": bson.M{"notifications": notification}},
+    )
+    if err != nil {
+        log.Printf("Error sending notification: %v", err)
+    }
+
+    w.WriteHeader(http.StatusOK)
+}
+
+func acceptFriendRequest(w http.ResponseWriter, r *http.Request) {
+    requestID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
     var request models.FriendRequest
-    err = collection.FindOne(ctx, bson.M{"_id": objectID, "to": username}).Decode(&request)
+    err := client.Database("amity").Collection("friend_requests").FindOne(ctx, bson.M{"_id": mustObjectID(requestID)}).Decode(&request)
     if err != nil {
         http.Error(w, "Friend request not found", http.StatusNotFound)
         return
     }
 
-    // Update the request status
-    _, err = collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$set": bson.M{"status": "accepted"}},
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": request.From},
+        bson.M{"$addToSet": bson.M{"friends": request.To}},
     )
     if err != nil {
-        http.Error(w, "Error accepting friend request", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    // Add to friends list for both users
-    _, err = usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": username},
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": request.To},
         bson.M{"$addToSet": bson.M{"friends": request.From}},
     )
     if err != nil {
-        http.Error(w, "Error updating friends list", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    _, err = usersCollection.UpdateOne(
-        ctx,
+    _, err = client.Database("amity").Collection("friend_requests").DeleteOne(ctx, bson.M{"_id": mustObjectID(requestID)})
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    // Notify sender
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "friend_accept",
+        From:      username,
+        Content:   fmt.Sprintf("%s accepted your friend request", username),
+        RelatedID: requestID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
         bson.M{"username": request.From},
-        bson.M{"$addToSet": bson.M{"friends": username}},
+        bson.M{"$push": bson.M{"notifications": notification}},
     )
     if err != nil {
-        http.Error(w, "Error updating friends list", http.StatusInternalServerError)
-        return
+        log.Printf("Error sending notification: %v", err)
     }
 
-    a.createNotification(request.From, "friend_accepted", username, fmt.Sprintf("%s accepted your friend request", username), requestID)
-
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Friend request accepted"))
 }
 
-func (a *App) rejectFriendRequest(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    requestID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("friend_requests")
+func rejectFriendRequest(w http.ResponseWriter, r *http.Request) {
+    requestID := mux.Vars(r)["id"]
+    username := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    objectID, err := primitive.ObjectIDFromHex(requestID)
+    var request models.FriendRequest
+    err := client.Database("amity").Collection("friend_requests").FindOne(ctx, bson.M{"_id": mustObjectID(requestID)}).Decode(&request)
     if err != nil {
-        http.Error(w, "Invalid request ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID, "to": username},
-        bson.M{"$set": bson.M{"status": "rejected"}},
-    )
-    if err != nil {
-        http.Error(w, "Error rejecting friend request", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
         http.Error(w, "Friend request not found", http.StatusNotFound)
         return
     }
 
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Friend request rejected"))
-}
-
-func (a *App) followUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    usernameToFollow := vars["username"]
-
-    username := r.Context().Value("username").(string)
-    if username == usernameToFollow {
-        http.Error(w, "Cannot follow yourself", http.StatusBadRequest)
+    _, err = client.Database("amity").Collection("friend_requests").DeleteOne(ctx, bson.M{"_id": mustObjectID(requestID)})
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    usersCollection := a.DB.Database("amity").Collection("users")
+    // Notify sender
+    notification := models.Notification{
+        ID:        primitive.NewObjectID(),
+        Type:      "friend_reject",
+        From:      username,
+        Content:   fmt.Sprintf("%s rejected your friend request", username),
+        RelatedID: requestID,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
+    }
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": request.From},
+        bson.M{"$push": bson.M{"notifications": notification}},
+    )
+    if err != nil {
+        log.Printf("Error sending notification: %v", err)
+    }
+
+    w.WriteHeader(http.StatusOK)
+}
+
+func followUser(w http.ResponseWriter, r *http.Request) {
+    username := mux.Vars(r)["username"]
+    follower := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    // Add to following list
-    _, err := usersCollection.UpdateOne(
-        ctx,
+    _, err := userCollection.UpdateOne(ctx,
         bson.M{"username": username},
-        bson.M{"$addToSet": bson.M{"following": usernameToFollow}},
-    )
-    if err != nil {
-        http.Error(w, "Error following user", http.StatusInternalServerError)
-        return
-    }
-
-    // Increment followers count
-    result, err := usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": usernameToFollow},
         bson.M{"$inc": bson.M{"followers": 1}},
     )
     if err != nil {
-        http.Error(w, "Error updating followers", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "User not found", http.StatusNotFound)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    a.createNotification(usernameToFollow, "follow", username, fmt.Sprintf("%s followed you", username), "")
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Followed user"))
-}
-
-func (a *App) unfollowUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    usernameToUnfollow := vars["username"]
-
-    username := r.Context().Value("username").(string)
-    if username == usernameToUnfollow {
-        http.Error(w, "Cannot unfollow yourself", http.StatusBadRequest)
-        return
-    }
-
-    usersCollection := a.DB.Database("amity").Collection("users")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    // Remove from following list
-    _, err := usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": username},
-        bson.M{"$pull": bson.M{"following": usernameToUnfollow}},
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": follower},
+        bson.M{"$addToSet": bson.M{"following": username}},
     )
     if err != nil {
-        http.Error(w, "Error unfollowing user", http.StatusInternalServerError)
+        http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
 
-    // Decrement followers count
-    result, err := usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": usernameToUnfollow},
-        bson.M{"$inc": bson.M{"followers": -1}},
-    )
-    if err != nil {
-        http.Error(w, "Error updating followers", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "User not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Unfollowed user"))
-}
-
-func (a *App) blockUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    usernameToBlock := vars["username"]
-
-    username := r.Context().Value("username").(string)
-    if username == usernameToBlock {
-        http.Error(w, "Cannot block yourself", http.StatusBadRequest)
-        return
-    }
-
-    usersCollection := a.DB.Database("amity").Collection("users")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    result, err := usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": username},
-        bson.M{"$addToSet": bson.M{"blocked_users": usernameToBlock}},
-    )
-    if err != nil {
-        http.Error(w, "Error blocking user", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "User not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Blocked user"))
-}
-
-func (a *App) unblockUser(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    usernameToUnblock := vars["username"]
-
-    username := r.Context().Value("username").(string)
-    if username == usernameToUnblock {
-        http.Error(w, "Cannot unblock yourself", http.StatusBadRequest)
-        return
-    }
-
-    usersCollection := a.DB.Database("amity").Collection("users")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    result, err := usersCollection.UpdateOne(
-        ctx,
-        bson.M{"username": username},
-        bson.M{"$pull": bson.M{"blocked_users": usernameToUnblock}},
-    )
-    if err != nil {
-        http.Error(w, "Error unblocking user", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "User not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Unblocked user"))
-}
-
-func (a *App) createNotification(userID, notifType, from, message, relatedID string) {
+    // Notify user
     notification := models.Notification{
-        UserID:    userID,
-        Type:      notifType,
-        From:      from,
-        Message:   message,
-        RelatedID: relatedID,
-        IsRead:    false,
-        CreatedAt: time.Now().Format(time.RFC3339),
+        ID:        primitive.NewObjectID(),
+        Type:      "follow",
+        From:      follower,
+        Content:   fmt.Sprintf("%s followed you", follower),
+        RelatedID: follower,
+        Timestamp: time.Now().Format(time.RFC3339),
+        Read:      false,
     }
-
-    collection := a.DB.Database("amity").Collection("notifications")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    _, err := collection.InsertOne(ctx, notification)
-    if err != nil {
-        log.Printf("Error creating notification: %v", err)
-    }
-}
-
-func (a *App) getNotifications(w http.ResponseWriter, r *http.Request) {
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("notifications")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{"user_id": username})
-    if err != nil {
-        http.Error(w, "Error fetching notifications", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
-    var notifications []models.Notification
-    if err := cursor.All(ctx, &notifications); err != nil {
-        http.Error(w, "Error decoding notifications", http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(notifications)
-}
-
-func (a *App) markNotificationRead(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    notifID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("notifications")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(notifID)
-    if err != nil {
-        http.Error(w, "Invalid notification ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID, "user_id": username},
-        bson.M{"$set": bson.M{"is_read": true}},
+    _, err = userCollection.UpdateOne(ctx,
+        bson.M{"username": username},
+        bson.M{"$push": bson.M{"notifications": notification}},
     )
     if err != nil {
-        http.Error(w, "Error marking notification as read", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Notification not found", http.StatusNotFound)
-        return
+        log.Printf("Error sending notification: %v", err)
     }
 
     w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Notification marked as read"))
 }
 
-func (a *App) sendMessage(w http.ResponseWriter, r *http.Request) {
-    var message models.Message
-    if err := json.NewDecoder(r.Body).Decode(&message); err != nil {
-        http.Error(w, "Invalid message data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    message.From = username
-    message.CreatedAt = time.Now().Format(time.RFC3339)
-
-    // Check privacy settings
-    usersCollection := a.DB.Database("amity").Collection("users")
+func unfollowUser(w http.ResponseWriter, r *http.Request) {
+    username := mux.Vars(r)["username"]
+    follower := r.Header.Get("username")
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    var recipient models.User
-    err := usersCollection.FindOne(ctx, bson.M{"username": message.To}).Decode(&recipient)
-    if err != nil {
-        http.Error(w, "Recipient not found", http.StatusNotFound)
-        return
-    }
-
-    if recipient.Settings.Privacy.Messaging == "friends" && !contains(recipient.Friends, username) {
-        http.Error(w, "Recipient only accepts messages from friends", http.StatusForbidden)
-        return
-    }
-    if recipient.Settings.Privacy.Messaging == "none" {
-        http.Error(w, "Recipient has disabled messaging", http.StatusForbidden)
-        return
-    }
-
-    // If is_ai is true, simulate an AI response
-    if message.IsAI {
-        message.Content = fmt.Sprintf("AI Response: I understand your message: '%s'. How can I assist you further?", message.Content)
-        message.From = "AI Assistant"
-    }
-
-    collection := a.DB.Database("amity").Collection("messages")
-    _, err = collection.InsertOne(ctx, message)
-    if err != nil {
-        http.Error(w, "Error sending message", http.StatusInternalServerError)
-        return
-    }
-
-    a.createNotification(message.To, "message", username, fmt.Sprintf("%s sent you a message", username), "")
-
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(message)
-}
-
-func (a *App) getMessages(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    otherUser := vars["username"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("messages")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{
-        "$or": []bson.M{
-            {"from": username, "to": otherUser},
-            {"from": otherUser, "to": username},
-        },
-    })
-    if err != nil {
-        http.Error(w, "Error fetching messages", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
-    var messages []models.Message
-    if err := cursor.All(ctx, &messages); err != nil {
-        http.Error(w, "Error decoding messages", http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(messages)
-}
-
-func (a *App) createList(w http.ResponseWriter, r *http.Request) {
-    var list models.List
-    if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
-        http.Error(w, "Invalid list data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    list.UserID = username
-    list.CreatedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("lists")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    result, err := collection.InsertOne(ctx, list)
-    if err != nil {
-        http.Error(w, "Error creating list", http.StatusInternalServerError)
-        return
-    }
-
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(list)
-}
-
-func (a *App) getLists(w http.ResponseWriter, r *http.Request) {
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("lists")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{"user_id": username})
-    if err != nil {
-        http.Error(w, "Error fetching lists", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
-    var lists []models.List
-    if err := cursor.All(ctx, &lists); err != nil {
-        http.Error(w, "Error decoding lists", http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(lists)
-}
-
-func (a *App) addToList(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    listID := vars["id"]
-
-    var item models.ListItem
-    if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-        http.Error(w, "Invalid item data", http.StatusBadRequest)
-        return
-    }
-
-    item.AddedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("lists")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(listID)
-    if err != nil {
-        http.Error(w, "Invalid list ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$push": bson.M{"items": item}},
-    )
-    if err != nil {
-        http.Error(w, "Error adding to list", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "List not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Added to list"))
-}
-
-func (a *App) createHangout(w http.ResponseWriter, r *http.Request) {
-    var hangout models.Hangout
-    if err := json.NewDecoder(r.Body).Decode(&hangout); err != nil {
-        http.Error(w, "Invalid hangout data", http.StatusBadRequest)
-        return
-    }
-
-    username := r.Context().Value("username").(string)
-    hangout.Creator = username
-    hangout.Participants = []string{username}
-    hangout.CreatedAt = time.Now().Format(time.RFC3339)
-
-    collection := a.DB.Database("amity").Collection("hangouts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    result, err := collection.InsertOne(ctx, hangout)
-    if err != nil {
-        http.Error(w, "Error creating hangout", http.StatusInternalServerError)
-        return
-    }
-
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(hangout)
-}
-
-func (a *App) getHangouts(w http.ResponseWriter, r *http.Request) {
-    collection := a.DB.Database("amity").Collection("hangouts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{})
-    if err != nil {
-        http.Error(w, "Error fetching hangouts", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
-    var hangouts []models.Hangout
-    if err := cursor.All(ctx, &hangouts); err != nil {
-        http.Error(w, "Error decoding hangouts", http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(hangouts)
-}
-
-func (a *App) joinHangout(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    hangoutID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("hangouts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(hangoutID)
-    if err != nil {
-        http.Error(w, "Invalid hangout ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$addToSet": bson.M{"participants": username}},
-    )
-    if err != nil {
-        http.Error(w, "Error joining hangout", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Hangout not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Joined hangout"))
-}
-
-func (a *App) leaveHangout(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    hangoutID := vars["id"]
-
-    username := r.Context().Value("username").(string)
-
-    collection := a.DB.Database("amity").Collection("hangouts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    objectID, err := primitive.ObjectIDFromHex(hangoutID)
-    if err != nil {
-        http.Error(w, "Invalid hangout ID", http.StatusBadRequest)
-        return
-    }
-
-    result, err := collection.UpdateOne(
-        ctx,
-        bson.M{"_id": objectID},
-        bson.M{"$pull": bson.M{"participants": username}},
-    )
-    if err != nil {
-        http.Error(w, "Error leaving hangout", http.StatusInternalServerError)
-        return
-    }
-    if result.MatchedCount == 0 {
-        http.Error(w, "Hangout not found", http.StatusNotFound)
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("Left hangout"))
-}
-
-func (a *App) handleWebFinger(w http.ResponseWriter, r *http.Request) {
-    resource := r.URL.Query().Get("resource")
-    if resource == "" {
-        http.Error(w, "Missing resource parameter", http.StatusBadRequest)
-        return
-    }
-
-    response := map[string]interface{}{
-        "subject": resource,
-        "links": []map[string]string{
-            {
-                "rel":  "self",
-                "type": "application/activity+json",
-                "href": fmt.Sprintf("https://amity.example.com/users/%s", resource[5:]),
-            },
-        },
-    }
-
-    w.Header().Set("Content-Type", "application/jrd+json")
-    json.NewEncoder(w).Encode(response)
-}
-
-func (a *App) handleOutbox(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    username := vars["username"]
-
-    collection := a.DB.Database("amity").Collection("posts")
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    cursor, err := collection.Find(ctx, bson.M{"username": username})
-    if err != nil {
-        http.Error(w, "Error fetching outbox", http.StatusInternalServerError)
-        return
-    }
-    defer cursor.Close(ctx)
-
-    var posts []models.Post
-    if err := cursor.All(ctx, &posts); err != nil {
-        http.Error(w, "Error decoding posts", http.StatusInternalServerError)
-        return
-    }
-
-    activities := map[string]interface{}{
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type":     "OrderedCollection",
-        "items":    posts,
-    }
-
-    w.Header().Set("Content-Type", "application/activity+json")
-    json.NewEncoder(w).Encode(activities)
-}
-
-func (a *App) handleInbox(w http.ResponseWriter, r *http.Request) {
-    var activity map[string]interface{}
-    if err := json.NewDecoder(r.Body).Decode(&activity); err != nil {
-        http.Error(w, "Invalid activity data", http.StatusBadRequest)
-        return
-    }
-
-    log.Printf("Received activity: %v", activity)
-    w.WriteHeader(http.StatusAccepted)
-}
-
-func contains(slice []string, item string) bool {
-    for _, s := range slice {
-        if s == item {
-            return true
-        }
-    }
-    return false
-}
-
-func (a *App) Run() {
-    log.Println("Server starting on :8080")
-    log.Fatal(http.ListenAndServe(":8080", a.Router))
-}
-
-func main() {
-    app := &App{}
-    app.Initialize()
-    app.Run()
-}
+    _, err := userCollection.UpdateOne(ctx,
+        bson.M{"username": username},
+        bson.M{"$inc
