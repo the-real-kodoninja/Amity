@@ -25,5 +25,33 @@ export const getShorts = () => api.get('/shorts');
 export const uploadFile = (formData) => api.post('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
 });
+export const searchUsers = (query) => api.get(`/search/users`, { params: { q: query } });
+export const followUser = (username) => api.post(`/users/${username}/follow`);
+export const unfollowUser = (username) => api.post(`/users/${username}/unfollow`);
+export const blockUser = (username) => api.post(`/users/${username}/block`);
+export const unblockUser = (username) => api.post(`/users/${username}/unblock`);
+export const mintPhoto = (photoId) => api.post(`/photos/${photoId}/mint`);
+export const getNotifications = () => api.get(`/notifications`);
+export const markNotificationRead = (notificationId) => api.post(`/notifications/${notificationId}/read`);
+export const getGroups = () => api.get(`/groups`);
+export const createGroup = (groupData) => api.post(`/groups`, groupData);
+export const joinGroup = (groupId) => api.post(`/groups/${groupId}/join`);
+export const leaveGroup = (groupId) => api.post(`/groups/${groupId}/leave`);
+export const getFriendRequests = () => api.get(`/friend-requests`);
+export const acceptFriendRequest = (requestId) => api.post(`/friend-requests/${requestId}/accept`);
+export const rejectFriendRequest = (requestId) => api.post(`/friend-requests/${requestId}/reject`);
+export const getMessages = (username) => api.get(`/messages/${username}`);
+export const sendMessage = (messageData) => api.post(`/messages`, messageData);
+export const getLists = () => api.get(`/lists`);
+export const createList = (listData) => api.post(`/lists`, listData);
+export const addToList = (listId, itemData) => api.post(`/lists/${listId}/add`, itemData);
+export const getHangouts = () => api.get(`/hangouts`);
+export const createHangout = (hangoutData) => api.post(`/hangouts`, hangoutData);
+export const joinHangout = (hangoutId) => api.post(`/hangouts/${hangoutId}/join`);
+export const leaveHangout = (hangoutId) => api.post(`/hangouts/${hangoutId}/leave`);
+export const getPages = () => api.get(`/pages`);
+export const createPage = (pageData) => api.post(`/pages`, pageData);
+export const followPage = (pageId) => api.post(`/pages/${pageId}/follow`);
+export const unfollowPage = (pageId) => api.post(`/pages/${pageId}/unfollow`);
 
 export default api;
