@@ -1,24 +1,28 @@
 package models
 
-import (
-	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
-)
+import "go.mongodb.org/mongo-driver/bson/primitive"
 
 type User struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Username    string             `bson:"username" json:"username"`
-	Email       string             `bson:"email" json:"email"`
-	Password    string             `bson:"password" json:"password"` // Hashed password
-	ProfilePic  string             `bson:"profilePic" json:"profilePic"`
-	CoverPhoto  string             `bson:"coverPhoto" json:"coverPhoto"`
-	Location    string             `bson:"location" json:"location"`
-	LastActive  time.Time          `bson:"lastActive" json:"lastActive"`
-	Connections []string           `bson:"connections" json:"connections"`
-	Followers   []string           `bson:"followers" json:"followers"`
-	Following   []string           `bson:"following" json:"following"`
-	Photos      []string           `bson:"photos" json:"photos"`
-	Posts       []string           `bson:"posts" json:"posts"`
-	IsAnonymous bool               `bson:"isAnonymous" json:"isAnonymous"`
+	ID            primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	Username      string             `json:"username" bson:"username"`
+	Email         string             `json:"email" bson:"email"`
+	Password      string             `json:"password" bson:"password"` // Hashed password
+	Location      string             `json:"location" bson:"location"`
+	Followers     int                `json:"followers" bson:"followers"`
+	Following     []string           `json:"following" bson:"following"`
+	Friends       []string           `json:"friends" bson:"friends"`
+	BlockedUsers  []string           `json:"blocked_users" bson:"blocked_users"`
+	ProfilePhoto  string             `json:"profile_photo" bson:"profile_photo"`
+	BannerPhoto   string             `json:"banner_photo" bson:"banner_photo"`
+	NSFWSettings  bool               `json:"nsfw_settings" bson:"nsfw_settings"` // true = show NSFW content
+	Notifications []Notification     `json:"notifications" bson:"notifications"`
+}
+
+type Notification struct {
+	ID        string `json:"id" bson:"id"`
+	Type      string `json:"type" bson:"type"` // e.g., "like", "comment", "follow", "friend_request"
+	From      string `json:"from" bson:"from"` // Username of the user who triggered the notification
+	Content   string `json:"content" bson:"content"`
+	Timestamp string `json:"timestamp" bson:"timestamp"`
+	Read      bool   `json:"read" bson:"read"`
 }

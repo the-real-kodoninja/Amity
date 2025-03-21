@@ -1,95 +1,300 @@
-import React from 'react';
-import { Container, Grid, TextField, Button, Typography, Box, Link } from '@mui/material';
-import './App.css';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Route, Routes, Link, Navigate } from 'react-router-dom';
+import { 
+    AppBar, Toolbar, Typography, Button, Container, TextField, InputAdornment, 
+    IconButton, List, ListItem, ListItemText, Badge, Drawer, Box, Grid, Avatar, Divider 
+} from '@mui/material';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import SearchIcon from '@mui/icons-material/Search';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import MenuIcon from '@mui/icons-material/Menu';
+import Home from './Home';
+import Profile from './Profile';
+import Photos from './Photos';
+import Login from './Login';
+import Notifications from './Notifications';
+import Groups from './Groups';
+import Pages from './Pages';
+import FriendRequests from './FriendRequests';
+import Explore from './Explore';
+import Messaging from './Messaging';
+import AIIM from './AIIM';
+import Lists from './Lists';
+import Hangouts from './Hangouts';
+import Settings from './Settings';
+import { getUser, searchUsers } from './api';
+
+const theme = createTheme({
+    palette: {
+        primary: {
+            main: '#2e7d32',
+        },
+        secondary: {
+            main: '#4caf50',
+        },
+        background: {
+            default: '#f4f4f4',
+        },
+    },
+    typography: {
+        fontFamily: 'Roboto, Arial, sans-serif',
+        h1: {
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            color: '#2e7d32',
+        },
+        h2: {
+            fontSize: '1.8rem',
+            fontWeight: 600,
+            color: '#388e3c',
+        },
+    },
+    components: {
+        MuiCard: {
+            styleOverrides: {
+                root: {
+                    borderRadius: 8,
+                    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                },
+            },
+        },
+        MuiPaper: {
+            styleOverrides: {
+                root: {
+                    borderRadius: 8,
+                    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                },
+            },
+        },
+    },
+});
 
 function App() {
-  return (
-    <Container maxWidth="lg" sx={{ mt: 4 }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 4 }}>
-        <Typography variant="h4" sx={{ fontWeight: 'bold', color: '#4CAF50' }}>
-          GreenHeartPT
-        </Typography>
-        <Box sx={{ flexGrow: 1 }} />
-        <TextField variant="outlined" placeholder="Search" sx={{ width: '300px' }} />
-      </Box>
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [user, setUser] = useState(null);
+    const [trends, setTrends] = useState([]); // Mock trends for now
 
-      <Grid container spacing={4}>
-        {/* Left Sidebar */}
-        <Grid item xs={12} md={4}>
-          <Typography variant="h6" gutterBottom>
-            Stay connected with everyone.
-          </Typography>
-          <Typography variant="h6" gutterBottom>
-            Promote your post.
-          </Typography>
-          <Typography variant="h6" gutterBottom>
-            Connect with what you like.
-          </Typography>
-          <Typography variant="h6" gutterBottom>
-            Become anonymous.
-          </Typography>
-          <Typography variant="h6" gutterBottom>
-            Create topics & trends.
-          </Typography>
-          <Typography variant="body2" color="textSecondary" sx={{ mt: 4 }}>
-            about policy terms ads promote developer groups language social
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            beta: 1.0019 testing in progress!
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            An ✕ Aviyon creation
-          </Typography>
-        </Grid>
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (token) {
+            setIsAuthenticated(true);
+            fetchUser();
+        }
+    }, []);
 
-        {/* Login Form */}
-        <Grid item xs={12} md={8}>
-          <Typography variant="h5" gutterBottom>
-            Sign up ^_^, it'll always be free!
-          </Typography>
-          <TextField
-            fullWidth
-            label="Email"
-            variant="outlined"
-            sx={{ mb: 2 }}
-          />
-          <TextField
-            fullWidth
-            label="Password"
-            type="password"
-            variant="outlined"
-            sx={{ mb: 2 }}
-          />
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-            <Button variant="contained" color="primary">
-              Login
-            </Button>
-            <Box>
-              <Link href="#" sx={{ mr: 2 }}>Create Account</Link>
-              <Link href="#">Forgot Something?</Link>
-            </Box>
-          </Box>
+    const fetchUser = async () => {
+        try {
+            const res = await getUser(localStorage.getItem('username'));
+            setUser(res.data);
+        } catch (err) {
+            console.error('Error fetching user:', err);
+        }
+    };
 
-          {/* Stats */}
-          <Box sx={{ display: 'flex', alignItems: 'center', mt: 4 }}>
-            <Typography variant="body1" sx={{ mr: 2 }}>
-              Total Users: 13
-            </Typography>
-            <Typography variant="body1">
-              Total Post: 115
-            </Typography>
-          </Box>
-          {/* Placeholder for post thumbnails */}
-          <Box sx={{ display: 'flex', mt: 2 }}>
-            <Box sx={{ width: 50, height: 50, bgcolor: 'grey.300', mr: 1 }} />
-            <Box sx={{ width: 50, height: 50, bgcolor: 'grey.300', mr: 1 }} />
-            <Box sx={{ width: 50, height: 50, bgcolor: 'grey.300' }} />
-          </Box>
-        </Grid>
-      </Grid>
-    </Container>
-  );
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        setIsAuthenticated(false);
+        setUser(null);
+    };
+
+    const handleSearch = async () => {
+        if (!searchQuery) return;
+        try {
+            const res = await searchUsers(searchQuery);
+            setSearchResults(res.data);
+        } catch (err) {
+            console.error('Error searching users:', err);
+        }
+    };
+
+    const toggleDrawer = () => {
+        setDrawerOpen(!drawerOpen);
+    };
+
+    const drawerContent = (
+        <Box sx={{ width: 250, p: 2 }}>
+            {user && (
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <Avatar src={user.profile_photo} sx={{ mr: 2 }} />
+                    <Typography variant="h6">{user.username}</Typography>
+                </Box>
+            )}
+            <Divider />
+            <List>
+                {[
+                    { text: 'Home', path: '/' },
+                    { text: 'Profile', path: '/profile' },
+                    { text: 'Photos', path: '/photos' },
+                    { text: 'Notifications', path: '/notifications' },
+                    { text: 'Groups', path: '/groups' },
+                    { text: 'Pages', path: '/pages' },
+                    { text: 'Friend Requests', path: '/friend-requests' },
+                    { text: 'Explore', path: '/explore' },
+                    { text: 'Messaging', path: '/messaging' },
+                    { text: 'AI IM', path: '/ai-im' },
+                    { text: 'Lists', path: '/lists' },
+                    { text: 'Hangouts', path: '/hangouts' },
+                    { text: 'Settings', path: '/settings' },
+                ].map(item => (
+                    <ListItem button key={item.text} component={Link} to={item.path} onClick={toggleDrawer}>
+                        <ListItemText primary={item.text} />
+                    </ListItem>
+                ))}
+                <ListItem button onClick={handleLogout}>
+                    <ListItemText primary="Logout" />
+                </ListItem>
+            </List>
+        </Box>
+    );
+
+    return (
+        <ThemeProvider theme={theme}>
+            <Router>
+                <AppBar position="static">
+                    <Toolbar>
+                        <IconButton color="inherit" onClick={toggleDrawer} sx={{ mr: 2 }}>
+                            <MenuIcon />
+                        </IconButton>
+                        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+                            Amity
+                        </Typography>
+                        {isAuthenticated && (
+                            <>
+                                <TextField
+                                    variant="outlined"
+                                    placeholder="Search users..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <InputAdornment position="end">
+                                                <IconButton onClick={handleSearch}>
+                                                    <SearchIcon />
+                                                </IconButton>
+                                            </InputAdornment>
+                                        ),
+                                    }}
+                                    sx={{ 
+                                        backgroundColor: 'white', 
+                                        borderRadius: 1, 
+                                        ml: 2, 
+                                        width: { xs: '100%', sm: 'auto' } 
+                                    }}
+                                    size="small"
+                                />
+                                <IconButton color="inherit" component={Link} to="/notifications">
+                                    <Badge badgeContent={unreadCount} color="secondary">
+                                        <NotificationsIcon />
+                                    </Badge>
+                                </IconButton>
+                            </>
+                        )}
+                    </Toolbar>
+                </AppBar>
+                <Drawer anchor="left" open={drawerOpen} onClose={toggleDrawer}>
+                    {drawerContent}
+                </Drawer>
+                <Container sx={{ mt: 4, mb: 4 }}>
+                    <Grid container spacing={2}>
+                        <Grid item xs={12} md={8}>
+                            {isAuthenticated && searchResults.length > 0 && (
+                                <List sx={{ mb: 4 }}>
+                                    {searchResults.map(result => (
+                                        <ListItem key={result.id}>
+                                            <ListItemText primary={result.username} secondary={result.location} />
+                                        </ListItem>
+                                    ))}
+                                </List>
+                            )}
+                            <Routes>
+                                <Route path="/login" element={<Login setIsAuthenticated={setIsAuthenticated} />} />
+                                <Route 
+                                    path="/" 
+                                    element={isAuthenticated ? <Home /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/profile" 
+                                    element={isAuthenticated ? <Profile /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/photos" 
+                                    element={isAuthenticated ? <Photos /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/notifications" 
+                                    element={isAuthenticated ? <Notifications setUnreadCount={setUnreadCount} /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/groups" 
+                                    element={isAuthenticated ? <Groups /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/pages" 
+                                    element={isAuthenticated ? <Pages /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/friend-requests" 
+                                    element={isAuthenticated ? <FriendRequests /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/explore" 
+                                    element={isAuthenticated ? <Explore /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/messaging" 
+                                    element={isAuthenticated ? <Messaging /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/ai-im" 
+                                    element={isAuthenticated ? <AIIM /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/lists" 
+                                    element={isAuthenticated ? <Lists /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/hangouts" 
+                                    element={isAuthenticated ? <Hangouts /> : <Navigate to="/login" />} 
+                                />
+                                <Route 
+                                    path="/settings" 
+                                    element={isAuthenticated ? <Settings /> : <Navigate to="/login" />} 
+                                />
+                            </Routes>
+                        </Grid>
+                        <Grid item xs={12} md={4}>
+                            {isAuthenticated && (
+                                <Box sx={{ p: 2, backgroundColor: 'white', borderRadius: 2, boxShadow: 1 }}>
+                                    <Typography variant="h6">Connections</Typography>
+                                    <List>
+                                        {user?.friends?.map(friend => (
+                                            <ListItem key={friend}>
+                                                <ListItemText primary={friend} />
+                                            </ListItem>
+                                        ))}
+                                    </List>
+                                    <Typography variant="h6" sx={{ mt: 2 }}>Trends</Typography>
+                                    <List>
+                                        {['#BetaRelease', '#SocialMedia', '#Amity'].map(trend => (
+                                            <ListItem key={trend}>
+                                                <ListItemText primary={trend} />
+                                            </ListItem>
+                                        ))}
+                                    </List>
+                                </Box>
+                            )}
+                        </Grid>
+                    </Grid>
+                </Container>
+            </Router>
+        </ThemeProvider>
+    );
 }
 
 export default App;
