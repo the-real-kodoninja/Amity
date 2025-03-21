@@ -2,11 +2,18 @@ package models
 
 import "go.mongodb.org/mongo-driver/bson/primitive"
 
-type Message struct {
+type AdminMessage struct {
 	ID        primitive.ObjectID `json:"id" bson:"_id,omitempty"`
 	From      string             `json:"from" bson:"from"`
-	To        string             `json:"to" bson:"to"`
 	Content   string             `json:"content" bson:"content"`
-	IsAI      bool               `json:"is_ai" bson:"is_ai"` // For AI IM
-	CreatedAt string             `json:"created_at" bson:"created_at"`
+	Timestamp string             `json:"timestamp" bson:"timestamp"`
+	Read      bool               `json:"read" bson:"read"`
+}
+
+type Message struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	From      string             `bson:"from"`
+	To        string             `bson:"to"`
+	Content   string             `bson:"content"`
+	Timestamp string             `bson:"timestamp"`
 }

@@ -3,18 +3,22 @@ package models
 import "go.mongodb.org/mongo-driver/bson/primitive"
 
 type Post struct {
-	ID         primitive.ObjectID `json:"id" bson:"_id,omitempty"`
-	Username   string             `json:"username" bson:"username"`
-	Content    string             `json:"content" bson:"content"` // Limited to 280 characters
-	Media      []Media            `json:"media" bson:"media"`     // Photos, videos, files
-	Likes      int                `json:"likes" bson:"likes"`
-	Reactions  map[string]int     `json:"reactions" bson:"reactions"` // e.g., {"heart": 5, "kiss": 3}
-	Shares     int                `json:"shares" bson:"shares"`
-	Comments   []Comment          `json:"comments" bson:"comments"`
-	Timestamp  string             `json:"timestamp" bson:"timestamp"`
-	HiddenBy   []string           `json:"hidden_by" bson:"hidden_by"`   // Users who hid this post
-	IsShort    bool               `json:"is_short" bson:"is_short"`     // Indicates if this is a short
-	Visibility string             `json:"visibility" bson:"visibility"` // "public", "friends", "private"
+	ID           primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	Username     string             `json:"username" bson:"username"`
+	Content      string             `json:"content" bson:"content"`
+	Media        []Media            `json:"media" bson:"media"`
+	Timestamp    string             `json:"timestamp" bson:"timestamp"`
+	Likes        int                `json:"likes" bson:"likes"`
+	Reactions    map[string]int     `json:"reactions" bson:"reactions"`
+	Shares       int                `json:"shares" bson:"shares"`
+	Comments     []Comment          `json:"comments" bson:"comments"`
+	HiddenBy     []string           `json:"hidden_by" bson:"hidden_by"`
+	IsShort      bool               `json:"is_short" bson:"is_short"`
+	Deleted      bool               `json:"deleted" bson:"deleted"`
+	Sponsored    bool               `json:"sponsored" bson:"sponsored"`
+	Live         bool               `json:"live" bson:"live"`
+	NFTAddress   string             `json:"nft_address" bson:"nft_address"`     // New field
+	MintEarnings float64            `json:"mint_earnings" bson:"mint_earnings"` // New field
 }
 
 type Media struct {
