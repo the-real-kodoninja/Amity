@@ -28,7 +28,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var err error
-	client, err = mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
+	client, err = mongo.Connect(ctx, options.Client().ApplyURI("mongodb://admin:yourpassword@localhost:27017"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func main() {
 	r.HandleFunc("/monetization/update", updateMonetization).Methods("POST")
 
 	fmt.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	log.Fatal(http.ListenAndServe(":8081", r))
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
